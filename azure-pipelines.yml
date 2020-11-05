@@ -1,0 +1,72 @@
+trigger:
+  - master
+  - release/*
+  - develop
+
+jobs:
+  - job: 'Build'
+    pool:
+      vmImage: 'ubuntu-16.04'
+    variables:
+      PythonVersion: '3.5'
+    workspace:
+      clean: all 
+    steps:    
+      - task: UsePythonVersion@0
+        displayName: 'Build v$(Build.BuildId) - Python $(PythonVersion)'
+        inputs:
+          versionSpec: '$(PythonVersion)'
+      - task: SonarQubePrepare@4
+        enabled: false
+        displayName: 'Prepare analysis on SonarQube'
+        inputs:
+          SonarQube: 'SonarQube'
+          scannerMode: 'CLI'
+          configMode: 'manual'
+          cliProjectKey: 'test_python'
+          cliProjectName: 'Python (test)'
+          cliProjectVersion: '$(Build.BuildId)'
+          cliSources: '$(System.DefaultWorkingDirectory)/src'
+          extraProperties: |
+            sonar.exclusions=src/test/*
+            sonar.python.coverage.reportPaths=$(System.DefaultWorkingDirectory)/coverage.xml
+      - script: |
+          pip install --upgrade pip
+          pip install --no-cache-dir -r requirements.txt
+        displayName: 'Install dependencies'
+      - script: |
+          coverage run -m pytest -v -p no:cacheprovider --junitxml=junit/test-results.xml --cov=. --cov-report=xml --cov-report=html --cov-branch
+        enabled: true
+        displayName: 'Unit Test'
+      - task: SonarQubeAnalyze@4
+        enabled: false
+        displayName: 'Run scan SonarQube'
+      - task: SonarQubePublish@4
+        enabled: false
+        inputs:
+          pollingTimeoutSec: '30'
+      - task: PublishTestResults@2
+        condition: succeededOrFailed()
+        inputs:
+          testResultsFiles: '**/test-*.xml'
+          testRunTitle: 'Publish test results for Python $(PythonVersion)'
+      - task: PublishCodeCoverageResults@1
+        inputs:
+          codeCoverageTool: Cobertura
+          summaryFileLocation: '$(System.DefaultWorkingDirectory)/**/coverage.xml'
+          reportDirectory: '$(System.DefaultWorkingDirectory)/**/htmlcov'
+      - task: CopyFiles@2
+        displayName: 'Copy Files to: $(Build.ArtifactStagingDirectory)'
+        inputs:
+          SourceFolder: '$(Build.SourcesDirectory)'
+          Contents: |
+            src/**
+            requirements.txt
+            Dockerfile
+            !src/test/**
+            !**/__pycache__/**
+          TargetFolder: '$(Build.ArtifactStagingDirectory)'
+      - task: PublishBuildArtifacts@1
+        inputs:
+          pathToPublish: $(Build.ArtifactStagingDirectory)
+          artifactName: Build
